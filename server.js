@@ -31,9 +31,16 @@ const PORT = process.env.PORT || 3000;
 let clientPromise = null;
 function getClient() {
   if (!clientPromise) {
+    // po_token / visitor_data are youtubei.js's own documented config options
+    // for passing in an attestation token from an external source (e.g. a
+    // PO Token provider you run yourself). Onyx does not generate these —
+    // see README.md ("Why videos may fail on cloud hosts") for why, and for
+    // what your options are if you want to set one up independently.
     clientPromise = Innertube.create({
       cache: new UniversalCache(false),
       generate_session_locally: true,
+      ...(process.env.YT_PO_TOKEN ? { po_token: process.env.YT_PO_TOKEN } : {}),
+      ...(process.env.YT_VISITOR_DATA ? { visitor_data: process.env.YT_VISITOR_DATA } : {}),
     });
   }
   return clientPromise;
@@ -84,6 +91,102 @@ function safeList(maybeArray) {
   return Array.isArray(maybeArray) ? maybeArray : [];
 }
 
+// Turns a raw youtubei.js error into something a person can actually act on.
+// The most common real-world failure on cloud hosts is YouTube's bot/attestation
+// check, not a bug in this code — so name that explicitly when it looks like
+// that's what happened, instead of a generic "something broke" message.
+function describeError(err) {
+  const msg = String(err?.message || err || '').toLowerCase();
+  const looksLikeBotCheck =
+    msg.includes('bot') ||
+    msg.includes('sign in') ||
+    msg.includes('confirm') ||
+    msg.includes('login_required') ||
+    msg.includes('po_token') ||
+    msg.includes('potoken');
+
+  if (looksLikeBotCheck) {
+    return {
+      error:
+        "YouTube is asking this server to prove it's not a bot (its anti-abuse " +
+        'check). This is common on cloud hosts and isn\'t something this code ' +
+        'can fix on its own — see the "Why videos may fail on cloud hosts" ' +
+        'section of README.md for your options.',
+      detail: String(err?.message || err),
+    };
+  }
+  return { error: 'Request to YouTube failed.', detail: String(err?.message || err) };
+}
+
+// --- DuckDuckGo fallback search ---------------------------------------
+// Used only when YouTube's own search endpoint fails/blocks. This just
+// scrapes DuckDuckGo's plain HTML results page (the same one you get with
+// JS disabled) for youtube.com/watch links — no bot-check involved on
+// either side, since it's a public results page, not an API.
+async function searchDuckDuckGo(query) {
+  const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(
+    `${query} site:youtube.com/watch`
+  )}`;
+
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36',
+    },
+  });
+  if (!res.ok) throw new Error(`DuckDuckGo returned ${res.status}`);
+  const html = await res.text();
+
+  const linkPattern = /<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>(.*?)<\/a>/gs;
+  const seen = new Set();
+  const videos = [];
+  let match;
+
+  while ((match = linkPattern.exec(html)) !== null && videos.length < 20) {
+    const realUrl = resolveDdgUrl(match[1]);
+    const id = extractVideoId(realUrl);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+
+    videos.push({
+      id,
+      title: decodeEntities(match[2].replace(/<[^>]+>/g, '').trim()) || 'Untitled',
+      author: null,
+      thumbnail: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
+      duration: null,
+      views: null,
+      published: null,
+    });
+  }
+
+  return videos;
+}
+
+function resolveDdgUrl(href) {
+  try {
+    const full = href.startsWith('//') ? `https:${href}` : href;
+    const parsed = new URL(full);
+    const uddg = parsed.searchParams.get('uddg');
+    return uddg ? decodeURIComponent(uddg) : full;
+  } catch {
+    return href;
+  }
+}
+
+function extractVideoId(url) {
+  const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+  return match ? match[1] : null;
+}
+
+function decodeEntities(str) {
+  return str
+    .replace(/&amp;/g, '&')
+    .replace(/&#x27;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>');
+}
+
 // --- Routes ------------------------------------------------------------
 
 // Home feed (YouTube's public "trending" feed, no account needed)
@@ -98,14 +201,16 @@ app.get('/api/home', async (req, res) => {
     res.json({ videos });
   } catch (err) {
     console.error('[/api/home]', err);
-    res.status(502).json({ error: 'Could not load the home feed right now.' });
+    res.status(502).json(describeError(err));
   }
 });
 
-// Search
+// Search — tries YouTube's own search first, falls back to scraping
+// DuckDuckGo's HTML results for youtube.com/watch links if that fails.
 app.get('/api/search', async (req, res) => {
   const q = (req.query.q || '').toString().trim();
   if (!q) return res.status(400).json({ error: 'Missing ?q=' });
+
   try {
     const yt = await getClient();
     const results = await yt.search(q, { type: 'video' });
@@ -113,10 +218,21 @@ app.get('/api/search', async (req, res) => {
       .filter((v) => v.type === 'Video')
       .map(summarize)
       .filter(Boolean);
-    res.json({ query: q, videos });
-  } catch (err) {
-    console.error('[/api/search]', err);
-    res.status(502).json({ error: 'Search failed.' });
+
+    if (!videos.length) throw new Error('YouTube search returned no results');
+    return res.json({ query: q, source: 'youtube', videos });
+  } catch (primaryErr) {
+    console.warn('[/api/search] YouTube search failed, trying DuckDuckGo fallback:', primaryErr.message || primaryErr);
+    try {
+      const videos = await searchDuckDuckGo(q);
+      if (!videos.length) {
+        return res.status(502).json({ error: `No results for "${q}" from YouTube or the DuckDuckGo fallback.` });
+      }
+      return res.json({ query: q, source: 'duckduckgo', videos });
+    } catch (fallbackErr) {
+      console.error('[/api/search] DuckDuckGo fallback also failed:', fallbackErr);
+      return res.status(502).json(describeError(primaryErr));
+    }
   }
 });
 
@@ -149,7 +265,7 @@ app.get('/api/video/:id', async (req, res) => {
     });
   } catch (err) {
     console.error('[/api/video/:id]', err);
-    res.status(502).json({ error: 'Could not load this video.' });
+    res.status(502).json(describeError(err));
   }
 });
 
@@ -167,9 +283,9 @@ app.get('/api/stream/:id', async (req, res) => {
       settled = true;
       res.status(504).json({
         error:
-          'YouTube did not respond in time. This often means the server\'s ' +
-          'IP is being rate-limited/blocked by YouTube — common on cloud ' +
-          'hosts. Check the server logs for the underlying error.',
+          "YouTube did not respond in time. On cloud hosts this is almost " +
+          "always YouTube's anti-bot check (or a rate limit) rather than a " +
+          'bug here — see "Why videos may fail on cloud hosts" in README.md.',
       });
     }
   }, 15000);
@@ -200,9 +316,7 @@ app.get('/api/stream/:id', async (req, res) => {
     console.error('[/api/stream/:id]', err);
     if (!settled && !res.headersSent) {
       settled = true;
-      res
-        .status(502)
-        .json({ error: 'Could not stream this video.', detail: String(err?.message || err) });
+      res.status(502).json(describeError(err));
     }
   }
 });
