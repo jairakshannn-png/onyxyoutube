@@ -56,6 +56,10 @@ function buildCard(video, targetRoot = 'card') {
   const img = node.querySelector('img');
   img.src = video.thumbnail;
   img.alt = video.title || '';
+  img.onerror = () => {
+    img.onerror = null;
+    img.src = `https://i.ytimg.com/vi/${video.id}/mqdefault.jpg`;
+  };
 
   const durationEl = node.querySelector('.duration');
   if (video.duration) {
@@ -91,9 +95,13 @@ async function renderSearch(q) {
   if (!q) return renderState('type something to search');
   renderState(`searching "${q}"...`);
   try {
-    const { videos } = await getJSON(`/api/search?q=${encodeURIComponent(q)}`);
+    const { videos, source } = await getJSON(`/api/search?q=${encodeURIComponent(q)}`);
     if (!videos.length) return renderState(`no results for "${q}"`);
-    app.innerHTML = `<p class="section-label">// results for "${escapeHtml(q)}"</p><div class="grid" id="grid"></div>`;
+    const note =
+      source === 'duckduckgo'
+        ? ` <span style="color:var(--text-faint)">(YouTube search unavailable — showing DuckDuckGo results instead)</span>`
+        : '';
+    app.innerHTML = `<p class="section-label">// results for "${escapeHtml(q)}"${note}</p><div class="grid" id="grid"></div>`;
     const grid = document.getElementById('grid');
     videos.forEach((v) => grid.appendChild(buildCard(v)));
   } catch (err) {
