@@ -10,8 +10,8 @@
     "check": "node --check server.js && node --check app.js"
   },
   "engines": {
-    "node": ">=20"
-  },
+  "node": ">=22.0.0 <23.0.0"
+}
   "dependencies": {
     "express": "^4.21.2",
     "youtubei.js": "^17.2.0"
