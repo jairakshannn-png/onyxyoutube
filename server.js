@@ -1,22 +1,3 @@
-// Onyx — a black, ad-free frontend that sits in front of YouTube's own backend.
-//
-// Architecture (same idea as Invidious): this server holds the only connection
-// to YouTube. It talks to YouTube's internal "InnerTube" API using the
-// youtubei.js library, reshapes the response into a small clean JSON contract,
-// and the browser only ever talks to THIS server — never to youtube.com
-// directly. Video/audio bytes are streamed through this server too, so the
-// browser's network tab never shows a youtube.com or googlevideo.com request.
-//
-// This is intentionally NOT a generic "paste any URL" tunneling proxy.
-// A generic rewriting proxy can't relay YouTube's actual video bytes anyway —
-// those come from signed, session-bound googlevideo.com URLs — so the only
-// approach that actually plays video is to speak YouTube's own API from the
-// server, like Invidious does. That's what this file does.
-//
-// Heads up: YouTube changes its internal API without notice. When that
-// happens, youtubei.js usually ships an update within a few days. If
-// something here throws, `npm update youtubei.js` first before debugging.
-
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -26,8 +7,6 @@ import { Innertube, UniversalCache } from 'youtubei.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3000;
-
-// --- One shared InnerTube client, created lazily on first request ---
 let clientPromise = null;
 function getClient() {
   if (!clientPromise) {
@@ -40,18 +19,10 @@ function getClient() {
 }
 
 app.use(express.json());
-
-// Everything lives flat in this same folder alongside server.js. We serve
-// only the three frontend files by name (not the whole directory) so things
-// like server.js/package.json aren't accidentally downloadable.
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 app.get('/style.css', (req, res) => res.sendFile(path.join(__dirname, 'style.css')));
 app.get('/app.js', (req, res) => res.sendFile(path.join(__dirname, 'app.js')));
 
-// --- Helpers ---------------------------------------------------------------
-
-// Reshape whatever youtubei.js gives back for a "video in a list" into one
-// flat, stable shape the frontend can rely on regardless of upstream changes.
 function summarize(item) {
   if (!item) return null;
   const id = item.id || item.video_id;
@@ -83,10 +54,6 @@ function firstThumb(item) {
 function safeList(maybeArray) {
   return Array.isArray(maybeArray) ? maybeArray : [];
 }
-
-// --- Routes ------------------------------------------------------------
-
-// Home feed (YouTube's public "trending" feed, no account needed)
 app.get('/api/home', async (req, res) => {
   try {
     const yt = await getClient();
@@ -102,7 +69,6 @@ app.get('/api/home', async (req, res) => {
   }
 });
 
-// Search
 app.get('/api/search', async (req, res) => {
   const q = (req.query.q || '').toString().trim();
   if (!q) return res.status(400).json({ error: 'Missing ?q=' });
@@ -120,7 +86,6 @@ app.get('/api/search', async (req, res) => {
   }
 });
 
-// Single video: metadata + related videos
 app.get('/api/video/:id', async (req, res) => {
   try {
     const yt = await getClient();
@@ -152,16 +117,8 @@ app.get('/api/video/:id', async (req, res) => {
     res.status(502).json({ error: 'Could not load this video.' });
   }
 });
-
-// Media proxy — the server fetches the stream from YouTube and pipes the
-// bytes straight through. The browser only ever requests this URL.
 app.get('/api/stream/:id', async (req, res) => {
   let settled = false;
-
-  // Cloud hosts (Render, AWS, etc.) sometimes get rate-limited or silently
-  // throttled by YouTube in a way that hangs instead of erroring cleanly.
-  // Without this timeout that shows up client-side as a spinner that never
-  // resolves. Fail loudly instead so the real cause is visible.
   const timeout = setTimeout(() => {
     if (!settled && !res.headersSent) {
       settled = true;
@@ -183,7 +140,7 @@ app.get('/api/stream/:id', async (req, res) => {
     });
 
     clearTimeout(timeout);
-    if (settled) return; // timeout already responded, don't double-send
+    if (settled) return;
 
     settled = true;
     res.setHeader('Content-Type', 'video/mp4');
