@@ -156,6 +156,24 @@ app.get('/api/video/:id', async (req, res) => {
 // Media proxy — the server fetches the stream from YouTube and pipes the
 // bytes straight through. The browser only ever requests this URL.
 app.get('/api/stream/:id', async (req, res) => {
+  let settled = false;
+
+  // Cloud hosts (Render, AWS, etc.) sometimes get rate-limited or silently
+  // throttled by YouTube in a way that hangs instead of erroring cleanly.
+  // Without this timeout that shows up client-side as a spinner that never
+  // resolves. Fail loudly instead so the real cause is visible.
+  const timeout = setTimeout(() => {
+    if (!settled && !res.headersSent) {
+      settled = true;
+      res.status(504).json({
+        error:
+          'YouTube did not respond in time. This often means the server\'s ' +
+          'IP is being rate-limited/blocked by YouTube — common on cloud ' +
+          'hosts. Check the server logs for the underlying error.',
+      });
+    }
+  }, 15000);
+
   try {
     const yt = await getClient();
     const webStream = await yt.download(req.params.id, {
@@ -164,12 +182,28 @@ app.get('/api/stream/:id', async (req, res) => {
       format: 'mp4',
     });
 
+    clearTimeout(timeout);
+    if (settled) return; // timeout already responded, don't double-send
+
+    settled = true;
     res.setHeader('Content-Type', 'video/mp4');
     res.setHeader('Cache-Control', 'no-store');
-    Readable.fromWeb(webStream).pipe(res);
+
+    const nodeStream = Readable.fromWeb(webStream);
+    nodeStream.on('error', (streamErr) => {
+      console.error('[/api/stream/:id] mid-stream error', streamErr);
+      res.destroy();
+    });
+    nodeStream.pipe(res);
   } catch (err) {
+    clearTimeout(timeout);
     console.error('[/api/stream/:id]', err);
-    res.status(502).json({ error: 'Could not stream this video.' });
+    if (!settled && !res.headersSent) {
+      settled = true;
+      res
+        .status(502)
+        .json({ error: 'Could not stream this video.', detail: String(err?.message || err) });
+    }
   }
 });
 
