@@ -1,46 +1,105 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Onyx</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22><rect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%2308090a%22/><path d=%22M13 10l9 6-9 6z%22 fill=%22%236fd6ff%22/></svg>" />
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css" />
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#050907">
+  <meta name="description" content="ONYX Terminal — a terminal-style YouTube frontend powered by Invidious.">
+  <title>ONYX Terminal</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%23050907'/%3E%3Cpath d='M22 18l27 14-27 14z' fill='%236cf5a7'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/style.css">
 </head>
 <body>
+  <div class="scanlines" aria-hidden="true"></div>
+  <div class="shell">
+    <header class="topbar">
+      <button class="icon-button mobile-menu" id="menu-button" aria-label="Open navigation">☰</button>
+      <a class="brand" href="#/" aria-label="ONYX Terminal home">
+        <span class="brand-prompt">root@onyx</span><span class="brand-separator">:</span><span class="brand-path">~/watch</span><span class="brand-dollar">$</span>
+      </a>
+      <form class="commandbar" id="search-form" role="search" autocomplete="off">
+        <label for="search-input" class="command-prefix">find --video</label>
+        <input id="search-input" name="q" placeholder="search, paste a YouTube URL, or type :help" spellcheck="false" aria-label="Search videos">
+        <button type="submit">RUN</button>
+        <div class="suggestions" id="suggestions" hidden></div>
+      </form>
+      <div class="status" title="Invidious backend status">
+        <span class="status-light" id="status-light"></span>
+        <span id="instance-status">connecting</span>
+      </div>
+    </header>
 
-<header class="topbar">
-  <a href="#/" class="logo" aria-label="Onyx home">
-    <span class="logo-mark">▶</span>ONYX<span class="cursor">_</span>
-  </a>
+    <aside class="sidebar" id="sidebar">
+      <nav aria-label="Primary navigation">
+        <a href="#/" data-route="home"><span>01</span> home</a>
+        <a href="#/trending" data-route="trending"><span>02</span> trending</a>
+        <a href="#/popular" data-route="popular"><span>03</span> popular</a>
+        <a href="#/favorites" data-route="favorites"><span>04</span> favourites</a>
+        <a href="#/history" data-route="history"><span>05</span> history</a>
+      </nav>
 
-  <form id="search-form" class="search" role="search">
-    <span class="search-prompt">&gt;</span>
-    <input id="search-input" type="text" placeholder="search the backend" autocomplete="off" />
-  </form>
+      <div class="sidebar-block">
+        <p class="sidebar-label">SESSION</p>
+        <div class="tiny-stat"><span>privacy</span><strong>local</strong></div>
+        <div class="tiny-stat"><span>account</span><strong>none</strong></div>
+        <div class="tiny-stat"><span>ads</span><strong>blocked</strong></div>
+      </div>
 
-  <span class="topbar-tag">no ads · no tracking · no account</span>
-</header>
+      <div class="sidebar-block shortcuts">
+        <p class="sidebar-label">KEYS</p>
+        <p><kbd>/</kbd> search</p>
+        <p><kbd>g</kbd><kbd>h</kbd> home</p>
+        <p><kbd>g</kbd><kbd>f</kbd> favourites</p>
+        <p><kbd>?</kbd> help</p>
+      </div>
 
-<main id="app" class="app"></main>
+      <p class="sidebar-foot">Powered by the Invidious API.<br>No Google account required.</p>
+    </aside>
 
-<template id="tpl-card">
-  <a class="card" href="#">
-    <div class="thumb">
-      <img loading="lazy" />
-      <span class="duration"></span>
+    <main id="app" class="content" tabindex="-1" aria-live="polite"></main>
+
+    <footer class="footer">
+      <span>ONYX TERMINAL v2.0</span>
+      <span id="clock">--:--:--</span>
+      <span>ESC TO CANCEL · / TO SEARCH</span>
+    </footer>
+  </div>
+
+  <dialog id="help-dialog" class="terminal-dialog">
+    <div class="dialog-title">COMMAND REFERENCE <button id="close-help" aria-label="Close help">×</button></div>
+    <div class="dialog-body">
+      <p><code>:home</code> open the home feed</p>
+      <p><code>:trending</code> open trending videos</p>
+      <p><code>:popular</code> open popular videos</p>
+      <p><code>:history</code> view local watch history</p>
+      <p><code>:favorites</code> view saved videos</p>
+      <p><code>:clear history</code> erase local history</p>
+      <p><code>:clear favorites</code> erase saved videos</p>
+      <p><code>youtube.com/watch?v=...</code> open a video directly</p>
+      <hr>
+      <p>Nothing here requires an ONYX account. History, favourites and subscriptions remain in this browser.</p>
     </div>
-    <div class="meta">
-      <h3 class="title"></h3>
-      <p class="channel"></p>
-      <p class="stats"></p>
-    </div>
-  </a>
-</template>
+  </dialog>
 
-<script src="app.js"></script>
+  <template id="video-card-template">
+    <article class="video-card">
+      <a class="thumbnail-link" href="#">
+        <div class="thumbnail-frame">
+          <img alt="" loading="lazy">
+          <span class="duration"></span>
+          <span class="live-badge" hidden>LIVE</span>
+          <span class="card-index"></span>
+        </div>
+      </a>
+      <div class="video-card-body">
+        <a class="video-title" href="#"></a>
+        <a class="video-author" href="#"></a>
+        <p class="video-stats"></p>
+      </div>
+      <button class="save-button" aria-label="Save video">+</button>
+    </article>
+  </template>
+
+  <script type="module" src="/app.js"></script>
 </body>
 </html>

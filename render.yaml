@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: onyx-terminal
+    runtime: node
+    plan: free
+    buildCommand: npm run check
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: 20.19.0
+      - key: REGION
+        value: SG
+      - key: INVIDIOUS_INSTANCE
+        value: https://inv.nadeko.net
+      - key: INVIDIOUS_FALLBACKS
+        value: https://invidious.nerdvpn.de
+      - key: REQUEST_TIMEOUT_MS
+        value: "12000"
+      - key: CACHE_TTL_MS
+        value: "300000"
+      - key: MEDIA_PROXY
+        value: "true"

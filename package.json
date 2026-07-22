@@ -1,15 +1,16 @@
 {
-  "name": "onyx-tube",
-  "version": "1.0.0",
-  "description": "A self-hosted, ad-free, black-themed frontend for YouTube. Same video backend, completely different UI.",
+  "name": "onyx-terminal",
+  "version": "2.0.0",
+  "private": true,
   "type": "module",
-  "main": "server.js",
+  "description": "A terminal-style, privacy-focused YouTube frontend powered by the Invidious API.",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
-  },
-  "dependencies": {
-    "express": "^4.19.2",
-    "youtubei.js": "latest"
+    "dev": "node --watch server.js",
+    "check": "node --check server.js && node --check app.js",
+    "test": "node --test"
   }
 }

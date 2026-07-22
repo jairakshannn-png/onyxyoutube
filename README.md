@@ -1,136 +1,104 @@
-# Onyx
+# ONYX Terminal
 
-A self-hosted, black-themed, ad-free frontend for YouTube — same video
-backend, completely different UI. Architecturally this is the same idea as
-[Invidious](https://github.com/iv-org/invidious): one server that talks to
-YouTube on your behalf and hands your browser back a clean JSON API and a
-custom UI, so the ads, tracking scripts, and YouTube's own frontend code
-never load in your browser at all.
+A terminal-style, privacy-focused YouTube frontend powered by the public **Invidious API**. The browser talks only to this zero-dependency Node server. The server fetches metadata, comments, thumbnails, and media from configurable Invidious instances.
 
-## Run it
+## Features
+
+- Trending and popular feeds
+- Video, channel, and playlist search
+- Video playback through the app's own media proxy
+- Comments, related videos, channel pages, and playlists
+- Local favourites, subscriptions, and watch history
+- Keyboard navigation and terminal commands
+- Responsive terminal UI with no external frontend libraries or fonts
+- Invidious instance failover, caching, request timeouts, and graceful shutdown
+- Render Blueprint and `/healthz` endpoint
+
+## Run locally
 
 ```bash
-npm install
+cp .env.example .env
 npm start
 ```
 
-Then open `http://localhost:3000`.
+Open `http://localhost:3000`.
 
-## Testing
+Node.js 20 or newer is required. No third-party npm packages are needed.
 
-`test-helpers.mjs` unit-tests the DuckDuckGo-parsing and error-classification
-logic against fixture data — no network or dependencies needed:
+## Flat file layout
 
-```bash
-node test-helpers.mjs
+Every project file sits in this one folder. There are no `src`, `public`, or nested application directories. Upload or push the files exactly as supplied.
+
+```text
+.env.example
+.gitignore
+LICENSE
+README.md
+app.js
+index.html
+integration.test.js
+package.json
+render.yaml
+server.js
+server.test.js
+style.css
 ```
 
-This can't test actual calls to YouTube (that needs a live deploy), but it
-does catch regressions in the regex/parsing logic itself.
+## Deploy to Render
 
-## How it works
+### Blueprint method
 
-Everything lives flat in one folder — no subdirectories.
+1. Push this folder to a GitHub repository.
+2. In Render, choose **New → Blueprint**.
+3. Select the repository.
+4. Render reads `render.yaml` and creates the web service.
+5. After deployment, open the generated `onrender.com` address.
 
-- **`server.js`** — an Express server. It's the only thing that ever talks to
-  YouTube. It uses [`youtubei.js`](https://github.com/LuanRT/YouTube.js), a
-  library that speaks YouTube's internal "InnerTube" API (the same API
-  youtube.com's own web client uses), to fetch the trending feed, run
-  searches, load video metadata, and stream video/audio bytes. It reshapes
-  all of that into a small, stable JSON contract in `/api/*`, and it serves
-  `index.html`, `style.css`, and `app.js` by name (not as a static folder, so
-  `server.js`/`package.json` aren't accidentally downloadable alongside them).
-- **`index.html` / `style.css` / `app.js`** — a plain HTML/CSS/JS frontend
-  with a hash-based router (`#/`, `#/search?q=`, `#/watch?v=`). It never
-  talks to youtube.com; it only ever calls this server's own `/api/*`
-  routes, including for video playback — `/api/stream/:id` pipes the video
-  bytes through your server, so the browser's network tab shows only
-  requests to your own host.
+### Manual method
 
-## Why this isn't a generic "paste any URL" tunnel
+- Runtime: `Node`
+- Build command: `npm run check`
+- Start command: `npm start`
+- Health check path: `/healthz`
 
-If you've seen general-purpose unblocking proxies (fetch a page server-side,
-rewrite every link so it stays inside the proxy, hand back a look-alike
-page) — that pattern doesn't actually work for YouTube playback. YouTube's
-video bytes are served from signed, session-bound `googlevideo.com` URLs;
-a generic rewriting proxy has nothing to rewrite them *into*, and even
-projects built around that pattern typically fall back to YouTube's own
-embeddable player for video specifically, because there's no way around it
-without speaking YouTube's real API. So that's what Onyx does directly,
-server-side, from the start — it's the only approach that actually plays
-video through your own frontend.
+Set these environment variables:
 
-## Honest limitations
+| Variable | Default | Purpose |
+|---|---|---|
+| `INVIDIOUS_INSTANCE` | `https://inv.nadeko.net` | Primary Invidious server |
+| `INVIDIOUS_FALLBACKS` | `https://invidious.nerdvpn.de` | Comma-separated backup servers |
+| `REGION` | `SG` | Trending/search region |
+| `REQUEST_TIMEOUT_MS` | `12000` | Metadata request timeout |
+| `CACHE_TTL_MS` | `300000` | Metadata cache lifetime |
+| `MEDIA_PROXY` | `true` | Proxy video bytes through ONYX |
 
-- **Found and fixed a real bug**: `package.json` previously pinned
-  `"youtubei.js": "^11.0.0"` — a version that isn't published. Depending on
-  your npm version that can make a fresh `npm install` fail outright or
-  resolve unpredictably. It's now pinned to `"latest"` instead.
-- **YouTube's internal API isn't public or stable.** It changes without
-  notice, and `youtubei.js` sometimes lags behind for a few days after a
-  breaking change. If a route in `server.js` starts throwing, `npm update
-  youtubei.js` first.
-- **Terms of service.** Using an unofficial client to access YouTube's
-  backend, instead of youtube.com or the official API, sits outside
-  YouTube's ToS — the same territory Invidious, Piped, and NewPipe are in.
-  None of them are "hacking" YouTube (no auth is bypassed, no DRM is
-  broken — everything fetched is the same public data youtube.com's own
-  page requests), but it's worth knowing before you deploy this somewhere
-  public rather than running it for yourself.
-- **No login, no personalized feed, no comments/upload/history** in this
-  version — it only covers browsing, search, and playback. All of those are
-  addable the same way: add a route in `server.js` that calls the matching
-  `youtubei.js` method, then a render function in `app.js`.
-- **Single quality tier.** `/api/stream/:id` always requests `quality: 'best'`
-  muxed video+audio. If you want a quality picker, `yt.getInfo(id)` exposes
-  the full `adaptive_formats` list — you'd add an `itag` query param to
-  `/api/stream/:id` and let the frontend choose.
+## Terminal commands
 
-## Why videos may fail on cloud hosts (Render, AWS, etc.)
+- `:home`
+- `:trending`
+- `:popular`
+- `:history`
+- `:favorites`
+- `:clear history`
+- `:clear favorites`
+- `:help`
 
-If search and browsing work but playback hangs specifically on a cloud
-deploy, this is almost always YouTube's own anti-bot/attestation system
-("Sign in to confirm you're not a bot", technically enforced via something
-called a PO Token, generated by a challenge-response system called
-BotGuard) — not a bug in this app. YouTube enforces this far more
-aggressively against datacenter IP ranges than home connections, and it's
-the same wall every unofficial YouTube client hits to varying degrees
-(Invidious's public instances deal with this constantly).
+You can also paste a regular YouTube or `youtu.be` video URL into the search bar.
 
-What this project does about it:
+## Invidious reliability
 
-- `describeError()` in `server.js` recognizes error messages that look like
-  this check and tells you plainly what's going on instead of a generic
-  "something broke."
-- `getClient()` accepts an optional token via the `YT_PO_TOKEN` /
-  `YT_VISITOR_DATA` environment variables and passes them straight through
-  to `youtubei.js`'s own documented `po_token` / `visitor_data` options —
-  *if* you have one from your own source.
-- `/api/search` falls back to scraping DuckDuckGo's plain HTML results page
-  for `youtube.com/watch` links when YouTube's own search fails or returns
-  nothing (see `searchDuckDuckGo()`). This only helps *search discovery*
-  when YouTube's search endpoint specifically is blocked — it can't help
-  playback, since DuckDuckGo obviously doesn't serve video bytes.
+Public Invidious instances can become unavailable, rate-limit cloud hosts, or temporarily lose video playback. Keep at least two trusted instances configured. For the most reliable deployment, use your own Invidious instance and set `INVIDIOUS_INSTANCE` to its HTTPS URL.
 
-What this project deliberately does **not** do: generate its own PO Token.
-Doing that means solving Google's BotGuard attestation challenge — code
-whose specific job is defeating an anti-bot/anti-abuse verification system —
-and that's a step I'm not going to build into this project, regardless of
-the underlying goal being "just watch YouTube." If you want to pursue that
-yourself, `youtubei.js`'s own README documents the `po_token` config option
-and points to third-party generators; that's a decision for you to make and
-maintain, not something baked into Onyx by default.
+The frontend deliberately does not include user accounts. Favourites, subscriptions, and history are stored in the browser's `localStorage`.
 
-Practically, your best levers if this hits you are: run Onyx on a home
-connection or a residential-IP host instead of a datacenter one, expect an
-occasional failed video even so, or supply your own `YT_PO_TOKEN` if you
-set one up independently.
+## Security notes
 
-## Design
+- Upstream hostnames are set only through server environment variables.
+- Media proxy targets must use HTTPS.
+- IDs and query inputs are validated and length-limited.
+- The app sends a restrictive Content Security Policy.
+- No arbitrary URL proxy endpoint is exposed.
 
-True-black background, a cold ice-blue accent (`#6fd6ff`) instead of
-YouTube's red, Space Grotesk for titles, JetBrains Mono for every piece of
-metadata (durations, view counts, timestamps) so the interface reads a
-little like a terminal/log rather than a typical media app. All of it lives
-in CSS custom properties at the top of `style.css` if you want to
-retheme it.
+## Attribution
+
+ONYX Terminal is an independent frontend that uses the Invidious API. It does not copy the Invidious server code and is not affiliated with YouTube or the Invidious project.
